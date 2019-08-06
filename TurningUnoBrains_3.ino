@@ -91,8 +91,14 @@ void setup() {
 
 void loop() {
 
-  //get command character to invoke corresponding function
-  char cmd = recvCommandChar();
+  bool opInProg = false;
+
+  char cmd;
+
+  if (!opInProg) {
+    //get command character to invoke corresponding function
+    cmd = recvCommandChar();
+  }
 
   switch (cmd){
     // note curly brackets are needed in a case if declaration happens within
@@ -282,6 +288,7 @@ void loop() {
       break;
       
   } //switch
+  Serial.println("chaos");
 } //loop
 
 
@@ -311,6 +318,7 @@ void initSerial() {
   while (r != 'r'){
     r = Serial.read();
   }
+  Serial.println();
 }
 
 void prcHomeMotor(){
@@ -407,19 +415,17 @@ char recvCommandChar() {
   //function reads buffer until it finds '!' then returns the following character
   char alertChar = '!';
   char rc;
-  bool recvd = false;
-  while(!recvd) {
-    if (Serial.available() > 0) {
-      rc = Serial.read();
+  
+  if (Serial.available() > 0) {
+    rc = Serial.read();
 
-      if (rc == alertChar) {
-        delay(50); //so thingy can print
-        rc = Serial.read();
-        recvd = true;
-      }
+    if (rc == alertChar) {
+      while(Serial.available() < 1);
+      rc = Serial.read();
+      return rc;
     }
   }
-  return rc;
+  
 }
 
 //new
