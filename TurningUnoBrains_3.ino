@@ -1,74 +1,74 @@
+#include "DRV8825.h"
 #include "Adafruit_VL6180X.h"
-#include "BasicStepperDriver.h"
 #include "ArduinoJson.h"
+#include "Adafruit_BNO055.h"
 
-//for orientation
-#include <Adafruit_BNO055.h>
 
 /* Set the delay between fresh samples */
 #define BNO055_SAMPLERATE_DELAY_MS (100)
 
-Adafruit_BNO055 bno = Adafruit_BNO055();
 
-
-//define and initialise stepper variables and constants
-const int motorSteps = 400;
+// define pins
 const int dirPin = 4;
 const int stepPin = 5;
 const int driveEndLim = 6;
 const int idleEndLim = 7;
 const int laserPin = 8;
+const int enablePin = 3;
+
+// define stepper parameters
+const int motorSteps = 400;
+const int microsteps = 1;
 int rpm = 90;
-int currentPos = 0; //###REMOVE ASSIGNMENT###
-int measRes = 20;  //number of steps between taking each distance measurement
+int currentPos = 0; 
 int accel = 8000;
 
-//positive steps to the right
-BasicStepperDriver stepper(motorSteps, dirPin, stepPin);
+/*** CREATE HARDWARE OBJECTS ***/
+// stepper motor 
+DRV8825 stepper(motorSteps, dirPin, stepPin, enablePin);
 
-//for time of flight distance sensor
+// TOF distance sensor
 Adafruit_VL6180X vl = Adafruit_VL6180X();
 
+// orientation sensor
+Adafruit_BNO055 bno = Adafruit_BNO055();
+
+/*
+ *  =========
+ *    SETUP
+ *  =========
+ */
 void setup() {
-  
+
+  /*** INIT SERIAL ***/
+  // initialise serial communication with control device
   initSerial();
   Serial.println("<Serial Communication Verified>");
 
-  //check for VL6180X distance sensor (vl)
-  if (!vl.begin()){
+
+  /*** SETUP DISTANCE SENSOR ***/
+  // check for VL6180X distance sensor (vl)
+  if (!vl.begin()) {
     Serial.println("<Failed to find sensor. Please restart.>");
     while(true);  //cannot continue so halting exection here
   }
   Serial.println("<Distance Sensor Found>");
 
 
-  //ORIENTATION SENSOR
-    Serial.println("Orientation Sensor Raw Data Test"); Serial.println("");
-
-  /* Initialise the sensor */
-  if(!bno.begin())
-  {
-    /* There was a problem detecting the BNO055 ... check your connections */
+  /*** SETUP ORIENTATION SENSOR ***/
+  // chekc for sensor (bno)
+  if(!bno.begin()) {
+    // There was a problem detecting the BNO055 ... check your connections 
     Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
-    while(1);
+    while(true);
   }
+  delay(1000); //really?
+  bno.setExtCrystalUse(true); //what's this for?
 
-  delay(1000);
-
-  /* Display the current temperature */
-  int8_t temp = bno.getTemp();
-  Serial.print("Current Temperature: ");
-  Serial.print(temp);
-  Serial.println(" C");
-  Serial.println("");
-
-  bno.setExtCrystalUse(true);
-
-  Serial.println("Calibration status values: 0=uncalibrated, 3=fully calibrated");
+  Serial.println("<Orientation Sensor Found>");
 
 
-  //
-
+  /*** SETUP GENERAL ***/
   //set switches as pull-up inputs. NB switch connected to ground and pin will be high when switch open
   pinMode(driveEndLim,INPUT_PULLUP); 
   pinMode(idleEndLim,INPUT_PULLUP);
@@ -77,7 +77,7 @@ void setup() {
   pinMode(laserPin, OUTPUT);
 
   //begin motor: rpm, microsteps set to 1 for full step
-  stepper.begin(rpm, 1);
+  stepper.begin(rpm, microsteps);
   
   //print Uno setup complete
   Serial.println("<Uno Setup Complete>");
