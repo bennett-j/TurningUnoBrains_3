@@ -20,8 +20,12 @@ const int enablePin = 3;
 const int motorSteps = 400;
 const int microsteps = 1;
 int rpm = 90;
-int currentPos = 0; 
 int accel = 8000;
+
+// define other parameters
+const int ortInterval = 100;
+int lastOrtRead = millis(); //stores last time an orientation reading was taken
+int currentPos = 0; 
 
 /*** CREATE HARDWARE OBJECTS ***/
 // stepper motor 
@@ -66,7 +70,7 @@ void setup() {
   bno.setExtCrystalUse(true); //what's this for?
 
   Serial.println("<Orientation Sensor Found>");
-
+  
 
   /*** SETUP GENERAL ***/
   //set switches as pull-up inputs. NB switch connected to ground and pin will be high when switch open
@@ -89,206 +93,212 @@ void setup() {
  *  ========
  */
 
+
+bool opInProg = false;
+bool ortEnabled = false;
+
 void loop() {
 
-  bool opInProg = false;
 
-  char cmd;
+
+  // allocate memory
+  StaticJsonDocument<200> jData;
+
 
   if (!opInProg) {
     //get command character to invoke corresponding function
-    cmd = recvCommandChar();
-  }
-
-  switch (cmd){
+    char cmd = recvCommandChar();
+    
+    switch (cmd){
     // note curly brackets are needed in a case if declaration happens within
     
-  /*** SCAN PROCEDURE ***/    
-    case 'S': //scan
-      {
-      /* get additional info: start, end, resolution */
-      // read phrase from serial
-      char str[64];
-      recvPhrase(str);
-            
-      // allocate JSON document
-      StaticJsonDocument<200> instruction;
-
-      // deserialise transmission
-      DeserializationError err = deserializeJson(instruction, str);
-
-      // test if parsing succeeds
-      if (err) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(err.c_str());
-        return; //this will exit case
-      }
+    /*** SCAN PROCEDURE ***/    
+      case 'S': //scan
+        {
+        /* get additional info: start, end, resolution */
+        // read phrase from serial
+        char str[64];
+        recvPhrase(str);
+              
+        // allocate JSON document
+        StaticJsonDocument<200> instruction;
+  
+        // deserialise transmission
+        DeserializationError err = deserializeJson(instruction, str);
+  
+        // test if parsing succeeds
+        if (err) {
+          Serial.print(F("deserializeJson() failed: "));
+          Serial.println(err.c_str());
+          return; //this will exit case
+        }
+        
+        // fetch values
+        const int start_stp = instruction["start"];
+        const int end_stp = instruction["end"];
+        const int res_stp = instruction["resolution"];
+  
+        /* prepare hardware */
+        //move chariot to start position
+        chariot_goto(start_stp);
+  
+        //###review below line###
+        stepper.setSpeedProfile(stepper.LINEAR_SPEED, accel, accel);
+  
+        /* measurement retrieval procedure */
+        //do for given range, end EXCLUSIVE
+        for (int i = start_stp; i < end_stp; (i+=res_stp)) {
+  
+          //get (single) distance reading
+          float distance = getDistRead(); //error if -1   
       
-      // fetch values
-      const int start_stp = instruction["start"];
-      const int end_stp = instruction["end"];
-      const int res_stp = instruction["resolution"];
-
-      /* prepare hardware */
-      //move chariot to start position
-      chariot_goto(start_stp);
-
-      //###review below line###
-      stepper.setSpeedProfile(stepper.LINEAR_SPEED, accel, accel);
-
-      /* measurement retrieval procedure */
-      //do for given range, end EXCLUSIVE
-      for (int i = start_stp; i < end_stp; (i+=res_stp)) {
-
-        //get (single) distance reading
-        float distance = getDistRead(); //error if -1   
-    
-        //get orientation??
-    
-        /* generate and print JSON with data */
-        // allocate memory
-        StaticJsonDocument<200> currState;
-
-        // add values to document
-        currState["position"] = currentPos;
-        currState["distance"] = distance;
-
-        // generate and send to serial port
-        Serial.print('<');
-        serializeJson(currState, Serial);
-        Serial.println('>');
-                
-        // move chariot to next location
-        smove(res_stp);
+          //get orientation??
+      
+          /* generate and print JSON with data */
+          // allocate memory
+          StaticJsonDocument<200> currState;
+  
+          // add values to document
+          currState["position"] = currentPos;
+          currState["distance"] = distance;
+  
+          // generate and send to serial port
+          Serial.print('<');
+          serializeJson(currState, Serial);
+          Serial.println('>');
+                  
+          // move chariot to next location
+          smove(res_stp);
+            
+          delay(50);
+        } //for
+  
+        Serial.println("<Scan Complete>");
           
-        delay(50);
-      } //for
+          //stepper.setSpeedProfile(stepper.CONSTANT_SPEED);
+          //smove(-inValue); //NB if inVal not multiple of res then problem
+        }
+        break; 
+  
+    /*** GET ORIENTATION ***/
+      case 'Q': {
+        ortEnabled = true;
+        break;
+      }
 
-      Serial.println("<Scan Complete>");
+      case 'W': {
+        ortEnabled = false;
+        break;
+      }
         
-        //stepper.setSpeedProfile(stepper.CONSTANT_SPEED);
-        //smove(-inValue); //NB if inVal not multiple of res then problem
-      }
-      break; 
-
-  /*** GET ORIENTATION ***/
-    case 'Q':
-      {
-      for (int i = 0; i < 1000; i++) {
-        imu::Quaternion quat = bno.getQuat();
-        Serial.print("qW: ");
-        Serial.print(quat.w(), 4);
-        Serial.print(" qX: ");
-        Serial.print(quat.x(), 4);
-        Serial.print(" qY: ");
-        Serial.print(quat.y(), 4);
-        Serial.print(" qZ: ");
-        Serial.print(quat.z(), 4);
-        Serial.print("\n");
-
-        /* generate and print JSON with data */
-        // allocate memory
-        StaticJsonDocument<200> orQuat;
-
-        // add values to document
-        orQuat["qW"] = quat.w();
-        orQuat["qX"] = quat.x();
-        orQuat["qY"] = quat.y();
-        orQuat["qZ"] = quat.z();
+    /*** HOME CHARIOT ***/
+      case 'H': 
+        prcHomeMotor();
+        Serial.println("<Home Chariot Complete>");
+        break; 
+  
+    /*** MOVE CHARIOT BY ***/
+      case 'M':
+        {
+        /* recieve distance to move */
+        // read phrase from serial
+        char str[32];
+        recvPhrase(str);
+              
+        // allocate JSON document
+        StaticJsonDocument<50> instruction;
+  
+        // deserialise transmission
+        DeserializationError err = deserializeJson(instruction, str);
+  
+        // test if parsing succeeds
+        if (err) {
+          Serial.print(F("deserializeJson() failed: "));
+          Serial.println(err.c_str());
+          return; //this will exit case
+        }
         
-        // generate and send to serial port
-        Serial.print('<');
-        serializeJson(orQuat, Serial);
-        Serial.println('>');
-                
-      
-        delay(20);
-      }
-      Serial.print("<All OrQuat Sent>");
-      }
-      break;
-      
-  /*** HOME CHARIOT ***/
-    case 'H': 
-      prcHomeMotor();
-      Serial.println("<Home Chariot Complete>");
-      break; 
+        // fetch values
+        const int toMove_stp = instruction["stepsToMove"];
+  
+        //move
+        smove(toMove_stp);
+  
+        //send completion confirmation
+        Serial.println("<Chariot Moved>");
+  
+        sendPosition();
+  
+        Serial.println("<Move Complete>");  
+        }
+        break;
+  
+    /*** LASER: LIGHT ***/
+      case 'L':
+        digitalWrite(laserPin, HIGH);
+        break;  
+  
+    /*** LASER: DARK ***/
+      case 'D':
+        digitalWrite(laserPin, LOW);
+        break;
+  
+    /*** GET RANGE ***/
+      case 'R':
+        {
+        // move to the right until limit switch engaged
+        // use smove so current position is updated
+        stepper.setRPM(90);
+        while(digitalRead(idleEndLim) == LOW){
+          smove(2);
+          //delay(50);
+        }
+        stepper.setRPM(rpm);
+        
+        // send current position
+        sendPosition();
+  
+        // go home
+        chariot_goto(0); 
+        }
+        break;
+  
+    /*** UPDATE PARAMETERS ***/
+      case 'U':
+        {
+        //code
+        }
+        break;
+        
+    } //switch
 
-  /*** MOVE CHARIOT BY ***/
-    case 'M':
-      {
-      /* recieve distance to move */
-      // read phrase from serial
-      char str[32];
-      recvPhrase(str);
-            
-      // allocate JSON document
-      StaticJsonDocument<50> instruction;
+  /*** ORIENTATION READING ***/
+  int currentMillis = millis();
+  if (ortEnabled && (currentMillis - lastOrtRead >= ortInterval)) {
+    
+    // store current millis
+    lastOrtRead = currentMillis;
+    
+    // get orientation from sensor
+    imu::Quaternion quat = bno.getQuat();
+          
+    // add values to document
+    jData["qW"] = quat.w();
+    jData["qX"] = quat.x();
+    jData["qY"] = quat.y();
+    jData["qZ"] = quat.z();
+  
 
-      // deserialise transmission
-      DeserializationError err = deserializeJson(instruction, str);
+  
+  // generate and send to serial port
 
-      // test if parsing succeeds
-      if (err) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(err.c_str());
-        return; //this will exit case
-      }
-      
-      // fetch values
-      const int toMove_stp = instruction["stepsToMove"];
-
-      //move
-      smove(toMove_stp);
-
-      //send completion confirmation
-      Serial.println("<Chariot Moved>");
-
-      sendPosition();
-
-      Serial.println("<Move Complete>");  
-      }
-      break;
-
-  /*** LASER: LIGHT ***/
-    case 'L':
-      digitalWrite(laserPin, HIGH);
-      break;  
-
-  /*** LASER: DARK ***/
-    case 'D':
-      digitalWrite(laserPin, LOW);
-      break;
-
-  /*** GET RANGE ***/
-    case 'R':
-      {
-      // move to the right until limit switch engaged
-      // use smove so current position is updated
-      stepper.setRPM(90);
-      while(digitalRead(idleEndLim) == LOW){
-        smove(2);
-        //delay(50);
-      }
-      stepper.setRPM(rpm);
-      
-      // send current position
-      sendPosition();
-
-      // go home
-      chariot_goto(0); 
-      }
-      break;
-
-  /*** UPDATE PARAMETERS ***/
-    case 'U':
-      {
-      //code
-      }
-      break;
-      
-  } //switch
-  Serial.println("chaos");
+  Serial.print('<');
+  serializeJson(jData, Serial);
+  Serial.println('>');  
+  
+  }
+  }
+  //Serial.println("chaos");  
 } //loop
 
 
