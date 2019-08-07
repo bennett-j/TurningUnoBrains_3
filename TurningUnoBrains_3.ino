@@ -96,18 +96,94 @@ void setup() {
 
 bool opInProg = false;
 bool ortEnabled = false;
+bool doScanRead = false;
+bool doScanMove = false;
+bool doMoveAction = false;
+
+int scanStart_stp;
+int scanEnd_stp;
+int scanRes_stp;
+//int scanMovesRemaining;
+int stepsRemaining;
+int moveDir;
+char op;
 
 void loop() {
 
+  char jsonLabel[4]; // for parsing at other end
+  int L_ndx = 0; // label index
+  bool newData = false; // to know whether to send json
 
+  char cmd;
 
   // allocate memory
   StaticJsonDocument<200> jData;
 
+  /*  
+   *  if steps to move, then move
+   *  else, if in a scan and ready for reading, do that
+   *  else, if in a scan and not time for reading but time for move, do that
+   *  else, if none of these, then not in an operation so can check for new cmd char
+   *  
+   *  finally, if time, get an orientation reading  
+   */
 
-  if (!opInProg) {
+  /* MOVE ACTION */
+  if (stepsRemaining > 0) {
+    // if steps to move, then move
+    
+    //get stepper to do next action
+    //unsigned wait_time_micros = stepper.nextAction();
+    stepper.nextAction();
+    
+    // decrement steps remaining
+    stepsRemaining--;
+
+    // update current position according to direction (+/- 1)
+    currentPos = currentPos + moveDir;
+  }
+  /* SCAN READING */
+  else if (doScanRead) {
+    //get (single) distance reading
+    float distance = getDistRead(); //error if -1  
+
+    // add values to document
+    jData["position"] = currentPos;
+    jData["distance"] = distance;
+
+    // add 's' to json label
+    jsonLabel[L_ndx++] = 's';
+
+    // there is data to send
+    newData = true;
+
+    // set flags
+    doScanRead = false;
+    doScanMove = true;
+
+    Serial.println("Done Reading");
+  }
+  /* SCAN MOVEMENT */
+  else if (doScanMove) {
+    ///### want an else so doesn't do both in same loop ###  
+    // move a step
+    chariot_move(scanRes_stp);
+    
+    // set flags
+    doScanMove = false;
+    if ((currentPos + scanRes_stp) < scanEnd_stp) {
+      // if next step less than end, then continue
+      doScanRead = true;
+    }
+    else {
+      // else finish scan
+      Serial.println("<Scan Complete>");
+    }
+  }
+  /* CMD MANAGEMENT */
+  else {
     //get command character to invoke corresponding function
-    char cmd = recvCommandChar();
+    cmd = recvCommandChar();
     
     switch (cmd){
     // note curly brackets are needed in a case if declaration happens within
@@ -115,6 +191,9 @@ void loop() {
     /*** SCAN PROCEDURE ***/    
       case 'S': //scan
         {
+        opInProg = true;
+        op = 'S';
+        // <{"start":50, "end":250, "resolution":5}>
         /* get additional info: start, end, resolution */
         // read phrase from serial
         char str[64];
@@ -134,58 +213,34 @@ void loop() {
         }
         
         // fetch values
-        const int start_stp = instruction["start"];
-        const int end_stp = instruction["end"];
-        const int res_stp = instruction["resolution"];
+        scanStart_stp = instruction["start"];
+        scanEnd_stp = instruction["end"];
+        scanRes_stp = instruction["resolution"];
   
         /* prepare hardware */
         //move chariot to start position
-        chariot_goto(start_stp);
+        //chariot_goto(scanStart_stp);
   
         //###review below line###
         stepper.setSpeedProfile(stepper.LINEAR_SPEED, accel, accel);
-  
-        /* measurement retrieval procedure */
-        //do for given range, end EXCLUSIVE
-        for (int i = start_stp; i < end_stp; (i+=res_stp)) {
-  
-          //get (single) distance reading
-          float distance = getDistRead(); //error if -1   
-      
-          //get orientation??
-      
-          /* generate and print JSON with data */
-          // allocate memory
-          StaticJsonDocument<200> currState;
-  
-          // add values to document
-          currState["position"] = currentPos;
-          currState["distance"] = distance;
-  
-          // generate and send to serial port
-          Serial.print('<');
-          serializeJson(currState, Serial);
-          Serial.println('>');
-                  
-          // move chariot to next location
-          smove(res_stp);
-            
-          delay(50);
-        } //for
-  
-        Serial.println("<Scan Complete>");
-          
-          //stepper.setSpeedProfile(stepper.CONSTANT_SPEED);
-          //smove(-inValue); //NB if inVal not multiple of res then problem
+
+
+        /*movement*/
+        chariot_startMove(scanStart_stp - currentPos);        
+        doScanRead = true;
+        
+
+        
         }
         break; 
   
-    /*** GET ORIENTATION ***/
+      /* ENABLE ORIENTATION */
       case 'Q': {
         ortEnabled = true;
         break;
       }
 
+      /* DISABLE ORIENTATION */
       case 'W': {
         ortEnabled = false;
         break;
@@ -200,9 +255,18 @@ void loop() {
     /*** MOVE CHARIOT BY ***/
       case 'M':
         {
+        opInProg = true;
+        op = 'M';
+         
+        /*movement*/
+        chariot_startMove(200); 
+        
+      
+
+         
         /* recieve distance to move */
         // read phrase from serial
-        char str[32];
+        /*char str[32];
         recvPhrase(str);
               
         // allocate JSON document
@@ -229,7 +293,7 @@ void loop() {
   
         sendPosition();
   
-        Serial.println("<Move Complete>");  
+        Serial.println("<Move Complete>");*/  
         }
         break;
   
@@ -250,7 +314,7 @@ void loop() {
         // use smove so current position is updated
         stepper.setRPM(90);
         while(digitalRead(idleEndLim) == LOW){
-          smove(2);
+          chariot_move(2);
           //delay(50);
         }
         stepper.setRPM(rpm);
@@ -270,9 +334,12 @@ void loop() {
         }
         break;
         
-    } //switch
+    } //end switch
+  }
 
-  /*** ORIENTATION READING ***/
+    
+  
+  /* ORIENTATION READING */
   int currentMillis = millis();
   if (ortEnabled && (currentMillis - lastOrtRead >= ortInterval)) {
     
@@ -287,18 +354,29 @@ void loop() {
     jData["qX"] = quat.x();
     jData["qY"] = quat.y();
     jData["qZ"] = quat.z();
-  
 
-  
-  // generate and send to serial port
+    // add 'o' to json label
+    jsonLabel[L_ndx] = 'o';
+    L_ndx++;
 
-  Serial.print('<');
-  serializeJson(jData, Serial);
-  Serial.println('>');  
-  
+    // there is data to send
+    newData = true;
   }
+
+
+  /* SEND DATA OVER SERIAL */
+  if (newData) {
+
+    // terminate label
+    jsonLabel[L_ndx] = '\0';
+    // add label to document
+    jData["label"] = jsonLabel;
+
+    // print json document to serial  
+    Serial.print('<');
+    serializeJson(jData, Serial);
+    Serial.println('>');  
   }
-  //Serial.println("chaos");  
 } //loop
 
 
@@ -312,7 +390,7 @@ void loop() {
 void initSerial() {
   //function to begin and verify serial communication
   
-  Serial.begin(9600);
+  Serial.begin(250000);
 
   //wait for serial port to open
   while (!Serial) {
@@ -357,14 +435,30 @@ void prcHomeMotor(){
   stepper.setRPM(rpm);
 }
 
-void smove(int steps){
+
+
+//new
+void chariot_startMove(int steps) {
+  stepper.startMove(steps);
+
+  // params
+  stepsRemaining = abs(steps);
+  moveDir = steps/stepsRemaining;
+
+  
+}
+
+
+
+//new
+void chariot_move(int steps){
   stepper.move(steps);
   currentPos += steps;
 }
 
 //new
 void chariot_goto(int pos) {
-  smove(pos - currentPos);
+  chariot_move(pos - currentPos);
 }
 
 int mm2step(int mm){
