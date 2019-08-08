@@ -3,11 +3,6 @@
 #include "ArduinoJson.h"
 #include "Adafruit_BNO055.h"
 
-
-/* Set the delay between fresh samples */
-#define BNO055_SAMPLERATE_DELAY_MS (100)
-
-
 // define pins
 const int dirPin = 4;
 const int stepPin = 5;
@@ -24,8 +19,10 @@ int accel = 8000;
 
 // define other parameters
 const int ortInterval = 100;
-int lastOrtRead = millis(); //stores last time an orientation reading was taken
+unsigned long lastOrtRead = millis(); //stores last time an orientation reading was taken
 int currentPos = 0; 
+int stepsRemaining;
+int moveDir;
 
 /*** CREATE HARDWARE OBJECTS ***/
 // stepper motor 
@@ -36,6 +33,7 @@ Adafruit_VL6180X vl = Adafruit_VL6180X();
 
 // orientation sensor
 Adafruit_BNO055 bno = Adafruit_BNO055();
+
 
 /*
  *  =========
@@ -63,10 +61,10 @@ void setup() {
   // chekc for sensor (bno)
   if(!bno.begin()) {
     // There was a problem detecting the BNO055 ... check your connections 
-    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+    Serial.print("<Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!>");
     while(true);
   }
-  delay(1000); //really?
+  //delay(1000); //really?
   bno.setExtCrystalUse(true); //what's this for?
 
   Serial.println("<Orientation Sensor Found>");
@@ -82,21 +80,18 @@ void setup() {
 
   //begin motor: rpm, microsteps set to 1 for full step
   stepper.begin(rpm, microsteps);
+  stepper.setSpeedProfile(stepper.LINEAR_SPEED, accel, accel);
   
   //print Uno setup complete
   Serial.println("<Uno Setup Complete>");
 }
+
 
 /*
  *  ========
  *    LOOP
  *  ========
  */
-
- // declare movement parameters
-  int stepsRemaining;
-  int moveDir;
-  
 void loop() {
 
   /*
@@ -111,8 +106,6 @@ void loop() {
   static int scanStart_stp;
   static int scanEnd_stp;
   static int scanRes_stp;
-
-  
 
   // declare label data
   char jsonLabel[4]; // for parsing at other end
@@ -141,9 +134,8 @@ void loop() {
     currentPos += moveDir;
 
     if (stepsRemaining == 0 && !doScanRead) {
-      Serial.println(currentPos);
       Serial.println("<Chariot Move Complete>");
-      stepper.stop(); // because I'm paranoid
+      stepper.stop(); //because I'm paranoid
     }
   }
   
@@ -223,10 +215,6 @@ void loop() {
         scanEnd_stp = instruction["end"];
         scanRes_stp = instruction["resolution"];
   
-        /* prepare hardware */
-        //###review below line###
-        stepper.setSpeedProfile(stepper.LINEAR_SPEED, accel, accel);
-
         // initiate move to start location
         chariot_startMoveTo(scanStart_stp);        
         
@@ -235,9 +223,9 @@ void loop() {
         break;
       }      
       
-      /* MOVE CHARIOT BY */
+      /* MOVE CHARIOT TO */
       case 'M': {
-         // <{"posTo":200}>
+        // <{"posTo":200}>
         /* recieve distance to move */
         // read phrase from serial
         char str[32];
@@ -274,67 +262,63 @@ void loop() {
         break;
       }
         
-      /* LASER: GO LIGHT */
-      case 'L':
+      /* LASER: LIGHT UP */
+      case 'L': {
         digitalWrite(laserPin, HIGH);
-        break;  
+        break;
+      }  
   
       /* LASER: GO DARK */
-      case 'D':
+      case 'D': {
         digitalWrite(laserPin, LOW);
         break;
-  
+      }
+      
       /* HOME CHARIOT */
-      case 'H': 
+      case 'H': {
         // move to home limit
         prcMoveToLimit(-1, driveEndLim);
         
         // set position to 0
         currentPos = 0;
-        Serial.println(currentPos);
         Serial.println("<Home Chariot Complete>");
         break; 
+      }
       
       /* GET RANGE */
-      case 'R':
+      case 'R': {
         // move to idle end limit
         prcMoveToLimit(+1, idleEndLim);
 
-        /*stepper.startMove(200);
+        /* send range to main program */
+        // add values to document
+        jData["range"] = currentPos;
         
-        while (digitalRead(idleEndLim) == LOW) {
-          stepper.nextAction();
-          currentPos++;
-          //Serial.println(currentPos);
-        }      
-        */
-        // current position set in procedure
-        Serial.println("<Range Find Complete>");
-        Serial.print("Range is: "); Serial.println(currentPos);
-        break;
-        
+        // add 'r' to json label
+        jsonLabel[L_ndx++] = 'r';
+    
+        // there is data to send
+        newData = true;
+
         // go home
-        //chariot_goto(0);
+        chariot_goto(0);
+
+        Serial.println("<Range Find Complete>");
         break;
-      case 'G':
+      }
+      
+      case 'G': {
         Serial.print("Current Position: "); Serial.println(currentPos);
-  
-    /*** UPDATE PARAMETERS ***/
-      case 'U':
-        {
-        //code
-        }
         break;
-        
+      } 
     } //end switch
   }
-
     
   
   /* ORIENTATION READING */
-  int currentMillis = millis();
+  // complete if specified interval elapsed since last reading
+  unsigned long currentMillis = millis();
   if (ortEnabled && (currentMillis - lastOrtRead >= ortInterval)) {
-    
     // store current millis
     lastOrtRead = currentMillis;
     
@@ -357,16 +341,16 @@ void loop() {
 
   /* SEND DATA OVER SERIAL */
   if (newData) {
-
     // terminate label
     jsonLabel[L_ndx] = '\0';
     // add label to document
     jData["label"] = jsonLabel;
 
     // print json document to serial  
-    Serial.print('<');
+    Serial.write('<');
     serializeJson(jData, Serial);
-    Serial.println('>');  
+    Serial.write('>'); 
+    Serial.println(); 
   }
 } //loop
 
@@ -376,13 +360,10 @@ void loop() {
  *  FUNCTION DEFINITIONS
  *  ====================
  */
-
-//updated
 void prcInitSerial() {
   //function to begin and verify serial communication
   
   Serial.begin(250000);
-
   //wait for serial port to open
   while (!Serial) {
     delay(1);
@@ -390,31 +371,25 @@ void prcInitSerial() {
   
   //verify serial communication
   //print for other device to receive
-  Serial.print("<u>");
+  Serial.println("<u>");
  
   //wait to receive text from other device
   char r = 'x';  //initialise to something other than expected
   while (r != 'r'){
     r = Serial.read();
   }
-  Serial.println();
 }
 
 
-//new
 void prcMoveToLimit(int dir, int pin) {
-  long stuff = dir * 20000;
-  stepper.startMove(stuff);
-  Serial.print("stuff: "); Serial.println(stuff);
-  Serial.print("dir: "); Serial.println(dir);
-  Serial.print("motorSteps: "); Serial.println(motorSteps);
-
+  stepper.startMove(dir * 50000);
+ 
   while (digitalRead(pin) == LOW) {
     stepper.nextAction();
     currentPos += dir;
-    Serial.println(currentPos);
   }
-  stepper.stop(); // clear remaining steps
+  // clear remaining steps
+  stepper.stop(); 
 }
 
 
@@ -423,7 +398,6 @@ void chariot_startMoveTo(int pos) {
 }
 
 
-//new
 void chariot_startMove(int steps) {
   stepper.startMove(steps);
   
@@ -433,20 +407,17 @@ void chariot_startMove(int steps) {
 }
 
 
-//new
 void chariot_goto(int pos) {
   chariot_move(pos - currentPos);
 }
 
 
-//new
 void chariot_move(int steps){
   stepper.move(steps);
   currentPos += steps;
 }
 
 
-//new
 float getDistRead() {
   //takes 10 measurements, discards first two, returns mean of next 8.
   
@@ -481,7 +452,6 @@ float getDistRead() {
 }
           
 
-//new
 char recvCommandChar() {
   //function reads buffer until it finds '!' then returns the following character
   char alertChar = '!';
@@ -499,7 +469,6 @@ char recvCommandChar() {
 }
 
 
-//new
 char recvPhrase(char *str) {
   char startChar = '<';
   char endChar = '>';
