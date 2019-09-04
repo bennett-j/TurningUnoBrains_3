@@ -31,9 +31,10 @@ DRV8825 stepper(motorSteps, dirPin, stepPin, enablePin);
 // TOF distance sensor
 Adafruit_VL6180X vl = Adafruit_VL6180X();
 
+/*
 // orientation sensor
 Adafruit_BNO055 bno = Adafruit_BNO055();
-
+*/
 
 /*
  *  =========
@@ -56,9 +57,10 @@ void setup() {
   }
   Serial.println("<Distance Sensor Found>");
 
-
+  
   /*** SETUP ORIENTATION SENSOR ***/
-  // chekc for sensor (bno)
+  /*
+  // check for sensor (bno)
   if(!bno.begin()) {
     // There was a problem detecting the BNO055 ... check your connections 
     Serial.print("<Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!>");
@@ -68,7 +70,7 @@ void setup() {
   bno.setExtCrystalUse(true); //what's this for?
 
   Serial.println("<Orientation Sensor Found>");
-  
+  */
 
   /*** SETUP GENERAL ***/
   //set switches as pull-up inputs. NB switch connected to ground and pin will be high when switch open
@@ -316,6 +318,7 @@ void loop() {
     
   
   /* ORIENTATION READING */
+  /*
   // complete if specified interval elapsed since last reading
   unsigned long currentMillis = millis();
   if (ortEnabled && (currentMillis - lastOrtRead >= ortInterval)) {
@@ -337,6 +340,7 @@ void loop() {
     // there is data to send
     newData = true;
   }
+  */
 
 
   /* SEND DATA OVER SERIAL */
