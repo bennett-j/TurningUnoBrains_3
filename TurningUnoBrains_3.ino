@@ -146,6 +146,12 @@ void loop() {
     //get (single) distance reading
     float distance = getDistRead(); //error if -1  
 
+    if (distance == -1) {
+      // if reading error, make second attempt
+      distance = getDistRead();
+      // if error in this reading, accept
+    }
+
     // add values to document
     jData["position"] = currentPos;
     jData["distance"] = distance;
@@ -425,20 +431,26 @@ void chariot_move(int steps){
 float getDistRead() {
   //takes 10 measurements, discards first two, returns mean of next 8.
   
-  //get sensor status
-  uint8_t status = vl.readRangeStatus();
-
-  if (status == VL6180X_ERROR_NONE){
-    
-    //declare variables
-    uint8_t measurements[10];
-    int sum = 0;
-    
-    //get measurements
-    for (int j=0; j<10; j++) {
-      measurements[j] = vl.readRange();
+  //declare variables
+  uint8_t measurements[10];
+  bool error = false;
+  int sum = 0;
+  
+  //get measurements
+  for (int j=0; j<10; j++) {
+    measurements[j] = vl.readRange();
+    //get sensor status
+    uint8_t status = vl.readRangeStatus();
+    if (status != VL6180X_ERROR_NONE){
+      error = true;
     }
+  }
 
+  //NB if one error, it will void all of them - could consider more advanced functionality.
+  //such as allowing one or two errors and averaging others or voiding and retrying if too many errors.
+  
+  if (!error){
+    
     //sum 2nd to 10th measurement
     for (int j=2; j<10; j++) {
       sum = sum + measurements[j];
