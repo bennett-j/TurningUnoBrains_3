@@ -4,15 +4,15 @@
 #include "Adafruit_BNO055.h"
 
 // define pins
-const int dirPin = 4;
-const int stepPin = 5;
-const int driveEndLim = 6;
-const int idleEndLim = 7;
+const int dirPin = 5;
+const int stepPin = 4;
+const int driveEndLim = 10;
+const int idleEndLim = 9;
 const int laserPin = 8;
 const int enablePin = 3;
 
 // define stepper parameters
-const int motorSteps = 400;
+const int motorSteps = 200;
 const int microsteps = 1;
 int rpm = 90;
 int accel = 8000;
